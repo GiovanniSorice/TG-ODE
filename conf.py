@@ -189,7 +189,7 @@ c5 = lambda input_dim, output_dim, time_dim: get_conf_node('NODE', input_dim, ou
 c6 = lambda input_dim, output_dim, time_dim: get_conf_node('NDCN', input_dim, output_dim, time_dim)
 
 MODEL_CONF = {
-    'TGODE': (our, TemporalGraphEuler), # Our method
+    'TGODE': (our, GraphMidpoint), # Our method
     
     'DCRNN': (c0, DCRNNModel), 
     'GCRN_LSTM': (c1, GCRN_LSTM_Model), 
