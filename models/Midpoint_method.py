@@ -10,7 +10,6 @@ from typing import Optional
 
 class GraphMidpoint(Module):
     '''
-        h^m_v= h^(m-1)_v + e*activ_fun(x^(m-1) + (1/2)*e , y^(m - 1) + (1/2) * e * activ_fun(-L X W))
     '''
     def __init__(self, 
                  input_dim: int,
@@ -87,8 +86,10 @@ class GraphMidpoint(Module):
             h = h + prev_h
 
         for _ in range(delta_t):
-            conv = self.conv(h, edge_index) + 1/2*self.epsilon
-            h = h + self.epsilon * self.activ_fun(conv)
+            conv = self.conv(h, edge_index)
+            h_middle = h + 1/2*self.epsilon * self.activ_fun(conv)
+            conv_middle = self.conv(h_middle, edge_index)
+            h = h + self.epsilon * self.activ_fun(conv_middle)
             
-        y = self.readout(h) if self.readout is not None else h
-        return y, h
+        y = self.readout(h_middle) if self.readout is not None else h_middle
+        return y, h_middle
