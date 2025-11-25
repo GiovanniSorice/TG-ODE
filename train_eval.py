@@ -26,6 +26,7 @@ def optimizer_to(optim, device):
 
 def train(model, tr_loader, optimizer, criterion, device, x_scaler=None, t_scaler=None):
     model.train()
+    has_early_exit = hasattr(model, 'enable_early_exit') and model.enable_early_exit
 
     prev_h = None
     for batch in tr_loader:
@@ -33,22 +34,39 @@ def train(model, tr_loader, optimizer, criterion, device, x_scaler=None, t_scale
         model.zero_grad()
 
         y_pred, y_true = [], []
+        all_aux_outputs = [] if has_early_exit else None
+        
         for snapshot in batch:
             if x_scaler is not None: snapshot.x = x_scaler.transform(snapshot.x).squeeze(0)
             if t_scaler is not None: snapshot.delta_t = t_scaler.transform(snapshot.delta_t)
-            #snapshot = snapshot.to(device)        
             
-            # Perform a forward pass
-            y, h = model.forward(snapshot, prev_h)
+            # Forward pass with optional early exits
+            if has_early_exit:
+                y, h, aux_outputs = model.forward(snapshot, prev_h, return_all_exits=True)
+                all_aux_outputs.append(aux_outputs)
+            else:
+                y, h = model.forward(snapshot, prev_h)
+            
             prev_h = h
 
             y_pred.append(y.cpu())
             y_true.append(snapshot.y.cpu())
 
-        # Perform a backward pass to calculate the gradients
-        y_pred = torch.cat(y_pred)
-        y_true = torch.cat(y_true)
-        loss = criterion(y_pred, y_true)
+        # Compute loss
+        y_pred_cat = torch.cat(y_pred)
+        y_true_cat = torch.cat(y_true)
+        
+        if has_early_exit and all_aux_outputs[0] is not None:
+            # Joint training loss (Eq. 6-7)
+            loss = compute_joint_loss_batch(
+                all_aux_outputs, y_pred_cat, y_true_cat, 
+                criterion, model.loss_weights
+            )
+        else:
+            # Original loss
+            loss = criterion(y_pred_cat, y_true_cat)
+        
+        # Backward pass
         loss.backward()
 
         # Update parameters
@@ -68,12 +86,18 @@ def eval(model, loader, criterion, device, x_scaler=None, t_scaler=None):
             model.zero_grad()
 
             for snapshot in batch:
-                if x_scaler is not None: snapshot.x = x_scaler.transform(snapshot.x).squeeze(0)
-                if t_scaler is not None: snapshot.delta_t = t_scaler.transform(snapshot.delta_t)
-                #snapshot = snapshot.to(device)
+                if x_scaler is not None: 
+                    snapshot.x = x_scaler.transform(snapshot.x).squeeze(0)
+                if t_scaler is not None: 
+                    snapshot.delta_t = t_scaler.transform(snapshot.delta_t)
 
-                # Perform a forward pass
-                y, h = model.forward(snapshot, prev_h)
+                # Forward pass (use final output only, no auxiliary)
+                # During eval, we always use return_all_exits=False for efficiency
+                if hasattr(model, 'enable_early_exit') and model.enable_early_exit:
+                    y, h, _ = model.forward(snapshot, prev_h, return_all_exits=False)
+                else:
+                    y, h = model.forward(snapshot, prev_h)
+                
                 prev_h = h
 
                 y_pred.append(y.cpu().detach())
@@ -85,6 +109,49 @@ def eval(model, loader, criterion, device, x_scaler=None, t_scaler=None):
  
     return loss, y_true, y_pred
 
+
+# Helper function for joint loss computation
+def compute_joint_loss_batch(all_aux_outputs, y_pred_final, y_true, criterion, loss_weights):
+    """
+    Compute joint training loss across a batch (Eq. 6-7).
+    
+    Args:
+        all_aux_outputs: List of aux_outputs from each snapshot in batch
+        y_pred_final: Final concatenated predictions [total_nodes, output_dim]
+        y_true: Ground truth [total_nodes, output_dim]
+        criterion: Loss function
+        loss_weights: α_i weights from model
+    
+    Returns:
+        total_loss: Weighted sum of losses
+    """
+    total_loss = 0.0
+    
+    # We need to handle the fact that aux_outputs are per-snapshot
+    # but y_true is concatenated across all snapshots
+    
+    # Get number of exits from first snapshot
+    num_exits = len(all_aux_outputs[0])
+    
+    # Collect predictions from each exit across all snapshots
+    for exit_idx in range(num_exits):
+        exit_preds = []
+        
+        for snapshot_aux in all_aux_outputs:
+            step, pred = snapshot_aux[exit_idx]
+            exit_preds.append(pred.cpu())
+        
+        # Concatenate predictions from this exit
+        exit_pred_cat = torch.cat(exit_preds)
+        
+        # Compute companion loss L_i (Eq. 7)
+        loss_i = criterion(exit_pred_cat, y_true)
+        
+        # Weight α_i (Eq. 6)
+        weight = loss_weights[exit_idx]
+        total_loss += weight * loss_i
+    
+    return total_loss
 
 @ray.remote(num_cpus=1, num_gpus=float(os.environ.get('PERC_GPUS', 0.)))
 def train_and_eval(model_instance, opt):

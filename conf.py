@@ -179,7 +179,9 @@ def get_data_config(name: str, single_spike: bool = False): # is one of dataset.
     return conf
 
 
-our = lambda input_dim, output_dim, time_dim: get_conf(input_dim, output_dim, time_dim)
+our0 = lambda input_dim, output_dim, time_dim: get_conf(input_dim, output_dim, time_dim)
+our1 = lambda input_dim, output_dim, time_dim: get_conf(input_dim, output_dim, time_dim)
+our2 = lambda input_dim, output_dim, time_dim: get_conf(input_dim, output_dim, time_dim)
 c0 = lambda input_dim, output_dim, time_dim: get_conf_baseline('DCRNN', input_dim, output_dim, time_dim)
 c1 = lambda input_dim, output_dim, time_dim: get_conf_baseline('GCRN_LSTM', input_dim, output_dim, time_dim)
 c2 = lambda input_dim, output_dim, time_dim: get_conf_baseline('GCRN_GRU', input_dim, output_dim, time_dim)
@@ -189,8 +191,9 @@ c5 = lambda input_dim, output_dim, time_dim: get_conf_node('NODE', input_dim, ou
 c6 = lambda input_dim, output_dim, time_dim: get_conf_node('NDCN', input_dim, output_dim, time_dim)
 
 MODEL_CONF = {
-    'TGODE': (our, GraphMidpoint), # Our method
-    
+    'TGODE': (our0, TemporalGraphEuler), # Our method
+    'TGODE_MID': (our1, GraphMidpoint), # Our method
+    'TGODE_MID_JT': (our2, GraphMidpointJointTraining), # Our method
     'DCRNN': (c0, DCRNNModel), 
     'GCRN_LSTM': (c1, GCRN_LSTM_Model), 
     'GCRN_GRU': (c2, GCRN_GRU_Model),
